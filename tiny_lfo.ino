@@ -21,6 +21,7 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
+ 
 #include <avr/pgmspace.h>
 #include <avr/io.h>
 #include <avr/interrupt.h>
@@ -79,8 +80,8 @@ void setup() {
 
 void getLfoParams() {
   // read ADC to calculate the required DDS tuning word, log scale between 0.01Hz and 10Hz approx
-  float lfoControlVoltage = analogRead(LFO_FREQ_PIN) * 11/1024; //gives 11 octaves range 0.01Hz to 10Hz
-  lfoTword_m = 1369 * pow(2.0, lfoControlVoltage); //1369 sets the lowest frequency to 0.01Hz
+  float lfoControlVoltage = float(analogRead(LFO_FREQ_PIN)) * float(10)/float(1024); //gives 10 octaves range 0.01Hz to 10Hz
+  lfoTword_m = float(1369) * pow(2.0, lfoControlVoltage); //1369 sets the lowest frequency to 0.01Hz
   // read ADC to get the LFO wave type
   int adcVal = analogRead(LFO_WAVE_PIN);
   if (adcVal < 128) {
