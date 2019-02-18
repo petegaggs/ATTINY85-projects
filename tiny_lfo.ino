@@ -29,6 +29,7 @@
 #define PWM_PIN 1 //OC1A pin 6 of IC
 #define LFO_FREQ_PIN A2 //pin 3 of IC
 #define LFO_WAVE_PIN A3 //pin 2 of IC
+#define LFO_RESET_PIN 0 //pin 4 of IC. Optional. Leave disconnected if not used
 
 #define LFO_PWM OCR1A
 
@@ -45,6 +46,7 @@ const char sineTable[] PROGMEM = {
 uint32_t lfoPhaccu;   // phase accumulator
 uint32_t lfoTword_m;  // dds tuning word m
 uint8_t lfoCnt;      // top 8 bits of accum is index into table
+bool lfoReset = false;
 
 float lfoControlVoltage;
 enum lfoWaveTypes {
@@ -58,6 +60,8 @@ lfoWaveTypes lfoWaveform;
 
 void setup() {
   pinMode(PWM_PIN, OUTPUT);
+  pinMode(LFO_RESET_PIN, INPUT);
+  digitalWrite(LFO_RESET_PIN, HIGH); // enable internal pullup
   PLLCSR = _BV(PLLE); // enable PLL
   delay(10); //wait a bit to allow PLL to lock
   while (PLLCSR & _BV(PLOCK) == 0){
@@ -75,6 +79,8 @@ void setup() {
   TCCR0A = (1 << WGM01);
   TCCR0B = (1 << CS00);
   TIMSK = (1 << OCIE0A);
+  PCMSK = (1 << PCINT0); // enable pin change interrupt on PB0
+  GIMSK = (1 << PCIE); // enable pin change interrupts
   interrupts();
 }
 
@@ -101,9 +107,20 @@ void loop() {
   getLfoParams();
 }
 
+ISR(PCINT0_vect) {
+  if (digitalRead(0)) {
+    lfoReset = true;
+  }
+}
+
 ISR(TIMER0_COMPA_vect) {
   // handle LFO DDS
-  lfoPhaccu += lfoTword_m; // increment phase accumulator  
+  if (lfoReset) {
+    lfoPhaccu = 0; // reset the lfo
+    lfoReset = false;
+  } else {
+    lfoPhaccu += lfoTword_m; // increment phase accumulator
+  }
   lfoCnt = lfoPhaccu >> 24;  // use upper 8 bits for phase accu as frequency information
   switch (lfoWaveform) {
     case RAMP:
