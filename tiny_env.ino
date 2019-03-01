@@ -58,7 +58,7 @@ uint8_t envCurrentLevel; // the current level of envelope
 uint8_t envStoredLevel; // the level that the envelope was at start of release stage
 uint8_t envMultFactor; // multiplication factor to account for release starting before attack complete and visa versa
 float envControlVoltage;
-
+uint32_t lfsr = 1; //32 bit LFSR for dither, must be non-zero to start
 
 enum envStates {
   WAIT,
@@ -133,6 +133,13 @@ ISR(PCINT0_vect) {
 }
 
 ISR(TIMER0_COMPA_vect) {
+  // handle lfsr for dither
+  unsigned lsb = lfsr & 1;
+  // advance LFSR
+  lfsr >>= 1;
+  if (lsb) {
+    lfsr ^= 0xA3000000u;
+  }
   // handle Envelope DDS
   switch (envState) {
     case WAIT:
@@ -185,7 +192,7 @@ ISR(TIMER0_COMPA_vect) {
     case START_RELEASE:
       envPhaccu = 0; // clear the accumulator
       lastEnvCnt = 0;
-      envMultFactor = envCurrentLevel;
+      envMultFactor = envCurrentLevel + 1;
       envStoredLevel = envCurrentLevel;
       envState = RELEASE;
       break;
@@ -195,8 +202,12 @@ ISR(TIMER0_COMPA_vect) {
       if (envCnt < lastEnvCnt) {
         envState = WAIT; // end of release stage when counter wraps
       } else {
-        envCurrentLevel = envStoredLevel - ((envMultFactor * pgm_read_byte_near(expTable + envCnt)) >> 8);
-        ENV_PWM = envCurrentLevel;
+        if (envMultFactor == 0) {
+          envCurrentLevel = envStoredLevel - pgm_read_byte_near(expTable + envCnt);
+        } else {
+          envCurrentLevel = envStoredLevel - ((envMultFactor * pgm_read_byte_near(expTable + envCnt)) >> 8);
+        }
+        ENV_PWM = dither(envCurrentLevel, lfsr);
         lastEnvCnt = envCnt;
       }
       break;
@@ -206,6 +217,8 @@ ISR(TIMER0_COMPA_vect) {
 }
 
 
-
+uint8_t dither (uint8_t value, uint8_t lfsr) {
+  return value - 1 + (lfsr & 0x03);
+}
 
 
