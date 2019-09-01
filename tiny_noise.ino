@@ -1,6 +1,6 @@
 /*
  * Noise generator for ATTINT85, by Peter Gaggs
- * Uses 32 bit LFSR, output on PB0 (pin 5 of IC)
+ * Uses 32 bit LFSR, output by PWM on OCR1A (pin 6 of IC)
  * MIT License
  * Copyright (c) 2019 petegaggs
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -23,13 +23,22 @@
  */
 
 #include <avr/io.h> 
+#define PWM_PIN 1 //OC1A pin 6 of IC
+#define NOISE_PWM OCR1A
 
 uint32_t lfsr = 1; //32 bit LFSR, must be non-zero to start
 
 void setup() {
-  pinMode(0,OUTPUT); // this pins gives out the noise
+  pinMode(PWM_PIN,OUTPUT); // this pins gives out the noise
+  PLLCSR = _BV(PLLE); // enable PLL
+  delay(10); //wait a bit to allow PLL to lock
+  while (PLLCSR & _BV(PLOCK) == 0){
+    // ensure PLL is locked
+  }
+  PLLCSR |= _BV(PCKE); // set PCK to 64MHz
   // Set up timer 1 to generate interrupt at 31.25kHz
-  TCCR1 = _BV(CS10);
+  // configure PWM timer 1 channel A
+  TCCR1 = _BV(CS10)| _BV(COM1A1) | _BV(PWM1A);
   TIMSK = _BV(TOIE1);
 }
 
@@ -37,14 +46,9 @@ void loop() {
 }
 
 SIGNAL(TIMER1_OVF_vect) {
-  // set or clear noise pin PB0
+  // output lower 8 bits of lfsr on pwm
+  NOISE_PWM = lfsr & 0xFF;
   unsigned lsb = lfsr & 1;
-  if (lsb) {
-    PORTB |= 1;
-  }
-  else {
-    PORTB &= ~1;
-  }
   // advance LFSR
   lfsr >>= 1;
   if (lsb) {
