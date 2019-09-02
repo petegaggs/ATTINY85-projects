@@ -29,39 +29,29 @@
 #define PWM_PIN 1 //OC1A pin 6 of IC
 #define LFO_FREQ_PIN A2 //pin 3 of IC
 #define LFO_WAVE_PIN A3 //pin 2 of IC
-#define LFO_RESET_PIN 0 //pin 4 of IC. Optional. Leave disconnected if not used
 
 #define LFO_PWM OCR1A
 
-// table of 256 sine values / one sine period / stored in flash memory
-const char sineTable[] PROGMEM = {
-  127,130,133,136,139,143,146,149,152,155,158,161,164,167,170,173,176,178,181,184,187,190,192,195,198,200,203,205,208,210,212,215,217,219,221,223,225,227,229,231,233,234,236,238,239,240,
-  242,243,244,245,247,248,249,249,250,251,252,252,253,253,253,254,254,254,254,254,254,254,253,253,253,252,252,251,250,249,249,248,247,245,244,243,242,240,239,238,236,234,233,231,229,227,225,223,
-  221,219,217,215,212,210,208,205,203,200,198,195,192,190,187,184,181,178,176,173,170,167,164,161,158,155,152,149,146,143,139,136,133,130,127,124,121,118,115,111,108,105,102,99,96,93,90,87,84,81,78,
-  76,73,70,67,64,62,59,56,54,51,49,46,44,42,39,37,35,33,31,29,27,25,23,21,20,18,16,15,14,12,11,10,9,7,6,5,5,4,3,2,2,1,1,1,0,0,0,0,0,0,0,1,1,1,2,2,3,4,5,5,6,7,9,10,11,12,14,15,16,18,20,21,23,25,27,29,31,
-  33,35,37,39,42,44,46,49,51,54,56,59,62,64,67,70,73,76,78,81,84,87,90,93,96,99,102,105,108,111,115,118,121,124
-};
-
 // LFO stuff
+bool triPhase = true; // rising or falling phase for triangle wave
 uint32_t lfoPhaccu;   // phase accumulator
 uint32_t lfoTword_m;  // dds tuning word m
-uint8_t lfoCnt;      // top 8 bits of accum is index into table
-bool lfoReset = false;
-
-float lfoControlVoltage;
+uint8_t lfoCnt = 0;      // top 8 bits of accum is index into table
+uint8_t lastLfoCnt = 0;
+uint8_t pwmSet; // whole part of pwm
+uint8_t ditherByte; // random dither
+uint8_t pwmFrac; // fractional part of pwm
+uint32_t lfsr = 1; //32 bit LFSR, must be non-zero to startfloat lfoControlVoltage;
 enum lfoWaveTypes {
   RAMP,
   SAW,
   TRI,
-  SINE,
   SQR
 };
 lfoWaveTypes lfoWaveform;
 
 void setup() {
   pinMode(PWM_PIN, OUTPUT);
-  pinMode(LFO_RESET_PIN, INPUT);
-  digitalWrite(LFO_RESET_PIN, HIGH); // enable internal pullup
   PLLCSR = _BV(PLLE); // enable PLL
   delay(10); //wait a bit to allow PLL to lock
   while (PLLCSR & _BV(PLOCK) == 0){
@@ -79,8 +69,6 @@ void setup() {
   TCCR0A = (1 << WGM01);
   TCCR0B = (1 << CS00);
   TIMSK = (1 << OCIE0A);
-  PCMSK = (1 << PCINT0); // enable pin change interrupt on PB0
-  GIMSK = (1 << PCIE); // enable pin change interrupts
   interrupts();
 }
 
@@ -90,14 +78,12 @@ void getLfoParams() {
   lfoTword_m = float(1369) * pow(2.0, lfoControlVoltage); //1369 sets the lowest frequency to 0.01Hz
   // read ADC to get the LFO wave type
   int adcVal = analogRead(LFO_WAVE_PIN);
-  if (adcVal < 128) {
+  if (adcVal < 256) {
     lfoWaveform = RAMP;
-  } else if (adcVal < 384) {
+  } else if (adcVal < 512) {
     lfoWaveform = SAW;
-  } else if (adcVal < 640) {
+  } else if (adcVal < 768) {
     lfoWaveform = TRI;
-  } else if (adcVal < 896) {
-    lfoWaveform = SINE;
   } else {
     lfoWaveform = SQR;
   }
@@ -107,38 +93,53 @@ void loop() {
   getLfoParams();
 }
 
-ISR(PCINT0_vect) {
-  if (digitalRead(0)) {
-    lfoReset = true;
-  }
-}
-
 ISR(TIMER0_COMPA_vect) {
-  // handle LFO DDS
-  if (lfoReset) {
-    lfoPhaccu = 0; // reset the lfo
-    lfoReset = false;
-  } else {
-    lfoPhaccu += lfoTword_m; // increment phase accumulator
+  // LFSR, for dither
+  unsigned lsb = lfsr & 1;
+  lfsr >>= 1;
+  if (lsb) {
+    lfsr ^= 0xA3000000u;
   }
+  // handle LFO DDS
+  lfoPhaccu += lfoTword_m; // increment phase accumulator
   lfoCnt = lfoPhaccu >> 24;  // use upper 8 bits for phase accu as frequency information
+  ditherByte = lfsr & 0xFF; // random dither
+  pwmFrac = (lfoPhaccu >> 16) & 0xFF; // fractional part of 16 bit value
   switch (lfoWaveform) {
     case RAMP:
-      LFO_PWM = lfoCnt;
+      pwmSet = lfoCnt; // whole part
+      if ((pwmFrac > ditherByte) && (pwmSet < 255)) {
+        pwmSet += 1;
+      }     
+      LFO_PWM = pwmSet;
       break;
     case SAW:
-      LFO_PWM = 255 - lfoCnt;
+      pwmSet = 255 - lfoCnt; // whole part
+      // note dither is done in reverse for this waveform
+      if ((pwmFrac > ditherByte) && (pwmSet > 0)) {
+        pwmSet -= 1;
+      }
+      LFO_PWM = pwmSet;
       break;
     case TRI:
-      if (lfoCnt & 0x80) {
-        LFO_PWM = 254 - ((lfoCnt & 0x7F) << 1); //ramp down
-      } else {
-        LFO_PWM = lfoCnt << 1; //ramp up
+      if (lfoCnt < lastLfoCnt) {
+        triPhase = not(triPhase); // reverse direction
       }
-      break;
-    case SINE:
-      // sine wave from table
-      LFO_PWM = pgm_read_byte_near(sineTable + lfoCnt);
+      if (triPhase) {
+        // rising (same as ramp)
+        pwmSet = lfoCnt; // whole part
+        if ((pwmFrac > ditherByte) && (pwmSet < 255)) {
+          pwmSet += 1;
+        }     
+      } else {
+        // falling (same as saw)
+        pwmSet = 255 - lfoCnt; // whole part
+        // note dither is done in reverse for this waveform
+        if ((pwmFrac > ditherByte) && (pwmSet > 0)) {
+          pwmSet -= 1;
+        }
+      }
+      LFO_PWM = pwmSet;
       break;
     case SQR:
       if (lfoCnt & 0x80) {
@@ -150,7 +151,7 @@ ISR(TIMER0_COMPA_vect) {
     default:
       break;
   }
-
+  lastLfoCnt = lfoCnt;
 }
 
 
