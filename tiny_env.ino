@@ -22,8 +22,7 @@
  * SOFTWARE.
  */
 
-#define ADS_BUILD // only needs 3 ADCs, no need to blow fuses
-//#define ADSR_BUILD // note! need to blow fuse RSTDISBL
+//#define ADSR_BUILD // note! need to blow fuse RSTDISBL. If not defined, operates in ADS mode
 #define ISR_TEST_BUILD // use a GPIO to measure ISR time
 #include <avr/pgmspace.h>
 #include <avr/io.h>
@@ -42,47 +41,7 @@
 #define ENV_RELEASE_PIN A0 // pin 1 of IC: (optional), only for ADSR build, need to blow fuse RSTDISBL
 #define ENV_PWM OCR1A
 
-// table of exponential rising waveform for envelope gen
-// this one is shorter than the origninal (3.5xTCs instead of 5) and kludged to get to full scale
-const char expTable[] PROGMEM = {
-0,4,7,11,14,17,21,24,27,30,34,37,40,43,46,49,52,55,57,60,63,66,68,71,74,76,79,81,84,86,88,91,93,96,98,100,102,104,107,
-109,111,113,115,117,119,121,123,125,127,128,130,132,134,136,137,139,141,142,144,146,147,149,150,152,153,155,156,158,159,161,
-162,163,165,166,167,169,170,171,172,174,175,176,177,178,180,181,182,183,184,185,186,187,188,189,190,191,192,193,194,195,196,
-197,198,199,200,200,201,202,203,204,205,205,206,207,208,208,209,210,211,211,212,213,213,214,215,215,216,217,217,218,219,219,
-220,220,221,221,222,223,223,224,224,225,225,226,226,227,227,228,228,229,229,230,230,231,231,231,232,232,233,233,233,234,234,
-235,235,235,236,236,237,237,237,238,238,238,239,239,239,240,240,240,241,241,241,241,242,242,242,243,243,243,243,244,244,244,
-244,245,245,245,245,246,246,246,246,247,247,247,247,247,248,248,248,248,249,249,249,249,249,249,250,250,250,250,250,251,251,
-251,251,251,251,252,252,252,252,252,252,252,253,253,253,253,253,253,253,254,254,254,254,254,254,254,254,254,255,255,255,255
-};
-
-// 16-bit version of exponential waveform in 2 tables, one for msbyte, one for lsbyte
-//const char expTableHighByte[] PROGMEM = {
-//0,3,7,10,
-//13,17,20,23,27,30,33,36,39,42,45,48,51,54,57,60,62,65,68,70,73,76,78,81,83,86,88,90,93,95,97,99,102,104,106,
-//108,110,112,114,116,118,120,122,124,126,128,130,131,133,135,137,138,140,142,143,145,147,148,150,151,153,154,
-//156,157,159,160,161,163,164,166,167,168,169,171,172,173,174,176,177,178,179,180,181,182,183,185,186,187,188,
-//189,190,191,192,193,194,194,195,196,197,198,199,200,201,202,202,203,204,205,206,206,207,208,209,209,210,211,
-//211,212,213,213,214,215,215,216,217,217,218,219,219,220,220,221,221,222,223,223,224,224,225,225,226,226,227,
-//227,228,228,229,229,230,230,230,231,231,232,232,233,233,233,234,234,234,235,235,236,236,236,237,237,237,238,
-//238,238,239,239,239,240,240,240,241,241,241,241,242,242,242,243,243,243,243,244,244,244,244,245,245,245,245,
-//246,246,246,246,246,247,247,247,247,248,248,248,248,248,249,249,249,249,249,249,250,250,250,250,250,250,
-//251,251,251,251,251,251,252,252,252,252,252,252,252,253,253,253,253,253,253,253,253,254,254,254,254,254,254,254,254
-//};
-
-//const char expTableLowByte[] PROGMEM = {
-//0,145,23,144,253,95,180,254,61,112,152,181,
-//200,207,204,191,168,134,90,37,230,157,75,239,139,29,166,39,159,14,117,211,41,120,190,252,50,
-//97,136,168,192,209,218,221,217,206,188,163,132,94,49,255,198,135,66,246,165,78,242,143,39,185,70,
-//206,80,205,69,184,37,142,242,81,171,1,81,158,230,41,104,162,217,11,57,99,137,170,200,226,249,11,26,
-//37,44,48,48,45,38,28,15,254,234,211,185,156,123,88,49,8,219,172,122,69,14,211,150,86,20,207,136,
-//62,242,163,82,254,168,80,245,152,57,216,117,15,168,62,211,101,245,132,16,155,35,170,47,178,51,179,
-//49,173,40,160,24,141,1,116,228,84,194,46,153,2,106,209,54,153,252,93,189,27,120,212,47,136,225,56,
-//141,226,54,136,217,42,121,199,20,95,170,244,61,133,204,18,87,155,222,32,97,162,225,32,94,155,215,
-//18,77,135,192,248,47,102,156,209,5,57,108,159,208,1,50,97,144,191,237,26,70,114,158,200,242,28,69,
-//110,149,189,228,10,48,85,122,158,194,229,8,42,76,110,143,175,207,239,14,45,75,105,135,164,193,221
-//};  
-// table as 16-bit values
-
+// exponential waveform table, 16-bit
 const uint16_t expTable16[] PROGMEM = {
 0,913,1815,
 2704,3581,4447,5300,6142,6973,7792,8600,9397,10184,10959,11724,12479,13224,
@@ -165,20 +124,22 @@ void setup() {
 void getEnvParams() {
   float envControlVoltage;
   // read ADC to calculate the required DDS tuning word, log scale between 1ms and 10s approx
-  envControlVoltage = float(1023 - analogRead(ENV_ATTACK_PIN)) * 13/1024; //gives 13 octaves range 1ms to 10s
-  envAttackTword = 3422 * pow(2.0, envControlVoltage); //13690 sets the longest rise time to 10s
-  envControlVoltage = float(1023 - analogRead(ENV_DECAY_PIN)) * 13/1024; //gives 13 octaves range 1ms to 10s
-  envDecayTword = 3422 * pow(2.0, envControlVoltage); //13690 sets the longest rise time to 10s
+  //envControlVoltage = float(1023 - analogRead(ENV_ATTACK_PIN)) * 13/1024; //gives 13 octaves range 1ms to 10s
+  //envAttackTword = 54760 * pow(2.0, envControlVoltage); //13690 sets the longest rise time to 10s
+  envAttackTword = 4294967296 / ((float(analogRead(ENV_ATTACK_PIN)) * 76.368) + 7.8125); //gives 1ms to 10 secs approx
+  //envControlVoltage = float(1023 - analogRead(ENV_DECAY_PIN)) * 13/1024; //gives 13 octaves range 1ms to 10s
+  //envDecayTword = 54760 * pow(2.0, envControlVoltage); //13690 sets the longest rise time to 10s
+  envDecayTword = 4294967296 / ((float(analogRead(ENV_DECAY_PIN)) * 76.368) + 7.8125);
   envSustainControl = analogRead(ENV_SUSTAIN_PIN) >> 2; //0 to 255 level for sustain control
+  //envSustainControl = 255;
   #ifdef ADSR_BUILD
-  envControlVoltage = float(1023 - analogRead(ENV_RELEASE_PIN)) * 13/1024; //gives 13 octaves range 1ms to 10s
-  envReleaseTword = 3422 * pow(2.0, envControlVoltage); //13690 sets the longest rise time to 10s
-  #endif
-  #ifdef ADS_BUILD
-  envReleaseTword = envDecayTword;
+  envReleaseTword = 4294967296 / ((float(analogRead(ENV_RELEASE_PIN)) * 76.368) + 7.8125);
+  //envControlVoltage = float(1023 - analogRead(ENV_RELEASE_PIN)) * 13/1024; //gives 13 octaves range 1ms to 10s
+  //envReleaseTword = 54760 * pow(2.0, envControlVoltage); //13690 sets the longest rise time to 10s
+  #else
+  envReleaseTword = envDecayTword; //ADS MODE
   #endif
 }
-
 
 void loop() {
   getEnvParams();
