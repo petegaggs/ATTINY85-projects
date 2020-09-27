@@ -46,7 +46,8 @@ enum lfoWaveTypes {
   RAMP,
   SAW,
   TRI,
-  SQR
+  SQR,
+  SAMPLE_AND_HOLD
 };
 lfoWaveTypes lfoWaveform;
 
@@ -73,19 +74,43 @@ void setup() {
 }
 
 void getLfoParams() {
-  // read ADC to calculate the required DDS tuning word, log scale between 0.01Hz and 10Hz approx
-  float lfoControlVoltage = float(analogRead(LFO_FREQ_PIN)) * float(10)/float(1024); //gives 10 octaves range 0.01Hz to 10Hz
-  lfoTword_m = float(1369) * pow(2.0, lfoControlVoltage); //1369 sets the lowest frequency to 0.01Hz
-  // read ADC to get the LFO wave type
-  int adcVal = analogRead(LFO_WAVE_PIN);
-  if (adcVal < 256) {
-    lfoWaveform = RAMP;
-  } else if (adcVal < 512) {
-    lfoWaveform = SAW;
-  } else if (adcVal < 768) {
-    lfoWaveform = TRI;
+  // read ADC to calculate the required DDS tuning word, range 0.01Hz and 10Hz approx
+  uint32_t tempVal = analogRead(LFO_FREQ_PIN);
+  if (lfoWaveform == TRI) {
+    lfoTword_m = (tempVal << 11) + 687; // gives about 0.01 - 8Hz range
   } else {
-    lfoWaveform = SQR;
+    lfoTword_m = (tempVal << 10) + 1374; // gives about 0.01 - 8Hz range    
+  }
+  // read ADC to get the LFO wave type
+  int waveType = analogRead(LFO_WAVE_PIN) >> 7;
+  switch (waveType) {
+    case 0:
+      lfoWaveform = RAMP;
+      break;
+    case 1:
+      lfoWaveform = SAW;
+      break;
+    case 2:
+      lfoWaveform = TRI;
+      break;
+    case 3:
+      lfoWaveform = SQR;
+      break;
+    case 4:
+      lfoWaveform = SAMPLE_AND_HOLD;
+      break;
+    case 5:
+      lfoWaveform = RAMP; // reserved
+      break;
+    case 6:
+      lfoWaveform = RAMP; // reserved
+      break;
+    case 7:
+      lfoWaveform = RAMP; // reserved
+      break;
+    default:
+      lfoWaveform = RAMP; // reserved
+      break;    
   }
 }
 
@@ -111,7 +136,6 @@ ISR(TIMER0_COMPA_vect) {
       if ((pwmFrac > ditherByte) && (pwmSet < 255)) {
         pwmSet += 1;
       }     
-      LFO_PWM = pwmSet;
       break;
     case SAW:
       pwmSet = 255 - lfoCnt; // whole part
@@ -119,7 +143,6 @@ ISR(TIMER0_COMPA_vect) {
       if ((pwmFrac > ditherByte) && (pwmSet > 0)) {
         pwmSet -= 1;
       }
-      LFO_PWM = pwmSet;
       break;
     case TRI:
       if (lfoCnt < lastLfoCnt) {
@@ -139,21 +162,22 @@ ISR(TIMER0_COMPA_vect) {
           pwmSet -= 1;
         }
       }
-      LFO_PWM = pwmSet;
       break;
     case SQR:
       if (lfoCnt & 0x80) {
-        LFO_PWM = 255;
+        pwmSet = 255;
       } else {
-        LFO_PWM = 0;
+        pwmSet = 0;
+      }
+      break;
+    case SAMPLE_AND_HOLD:
+      if (lfoCnt < lastLfoCnt) {
+        pwmSet = ditherByte; // random
       }
       break;
     default:
       break;
   }
+  LFO_PWM = pwmSet;
   lastLfoCnt = lfoCnt;
 }
-
-
-
-
