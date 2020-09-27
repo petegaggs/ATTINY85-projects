@@ -23,7 +23,7 @@
  */
 
 //#define ADSR_BUILD // note! need to blow fuse RSTDISBL. If not defined, operates in ADS mode
-#define ISR_TEST_BUILD // use a GPIO to measure ISR time
+//#define ISR_TEST_BUILD // use a GPIO to measure ISR time
 #include <avr/pgmspace.h>
 #include <avr/io.h>
 #include <avr/interrupt.h>
@@ -70,13 +70,16 @@ uint32_t envDecayTword;  // dds tuning word decay stage
 uint8_t envSustainControl; // envelope sustain control 0-255
 uint8_t envCnt;      // top 8 bits of accum is index into table
 uint8_t lastEnvCnt;
-uint8_t envCurrentLevel; // the current level of envelope
-uint8_t envStoredLevel; // the level that the envelope was at start of release stage
+uint16_t envCurrentLevel; // the current level of envelope
+uint16_t envStoredLevel; // the level that the envelope was at start of release stage
 uint8_t envMultFactor; // multiplication factor to account for release starting before attack complete and visa versa
 float envControlVoltage;
 uint16_t tableVal;
 // dither
 uint32_t lfsr = 1; //32 bit LFSR, must be non-zero to start
+uint8_t ditherByte;
+uint8_t pwmVal; 
+uint8_t pwmFrac; // fractional part
 
 enum envStates {
   WAIT,
@@ -106,12 +109,12 @@ void setup() {
   PLLCSR |= _BV(PCKE); // set PCK to 64MHz
   // configure PWM timer 1 channel A
   TCCR1 = _BV(CS10)| _BV(COM1A1) | _BV(PWM1A);
-  // Set up timer 0 to generate interrupt at 31.25kHz
+  // Set up timer 0 to generate interrupt at 15.625kHz
   noInterrupts();
   TCCR0A = 0;
   TCCR0B = 0;
   TCNT0 = 0;
-  OCR0A = 3; //31250 / (3+1) = 7812.5Hz timer
+  OCR0A = 1; //31250 / (1+1) = 15625Hz timer
   TCCR0A = (1 << WGM01);
   TCCR0B = (1 << CS02); // prescaler divide by 256 (8MHz/256=31250Hz)
   TIMSK = (1 << OCIE0A);
@@ -124,18 +127,12 @@ void setup() {
 void getEnvParams() {
   float envControlVoltage;
   // read ADC to calculate the required DDS tuning word, log scale between 1ms and 10s approx
-  //envControlVoltage = float(1023 - analogRead(ENV_ATTACK_PIN)) * 13/1024; //gives 13 octaves range 1ms to 10s
-  //envAttackTword = 54760 * pow(2.0, envControlVoltage); //13690 sets the longest rise time to 10s
-  envAttackTword = 4294967296 / ((float(analogRead(ENV_ATTACK_PIN)) * 76.368) + 7.8125); //gives 1ms to 10 secs approx
-  //envControlVoltage = float(1023 - analogRead(ENV_DECAY_PIN)) * 13/1024; //gives 13 octaves range 1ms to 10s
-  //envDecayTword = 54760 * pow(2.0, envControlVoltage); //13690 sets the longest rise time to 10s
-  envDecayTword = 4294967296 / ((float(analogRead(ENV_DECAY_PIN)) * 76.368) + 7.8125);
+  // constants are computed in spreadsheet
+  envAttackTword = 4294967296 / ((float(analogRead(ENV_ATTACK_PIN)) * 152.737) + 15.625); //gives 1ms to 10 secs approx
+  envDecayTword = 4294967296 / ((float(analogRead(ENV_DECAY_PIN)) * 152.737) + 15.625);
   envSustainControl = analogRead(ENV_SUSTAIN_PIN) >> 2; //0 to 255 level for sustain control
-  //envSustainControl = 255;
   #ifdef ADSR_BUILD
-  envReleaseTword = 4294967296 / ((float(analogRead(ENV_RELEASE_PIN)) * 76.368) + 7.8125);
-  //envControlVoltage = float(1023 - analogRead(ENV_RELEASE_PIN)) * 13/1024; //gives 13 octaves range 1ms to 10s
-  //envReleaseTword = 54760 * pow(2.0, envControlVoltage); //13690 sets the longest rise time to 10s
+  envReleaseTword = 4294967296 / ((float(analogRead(ENV_RELEASE_PIN)) * 152.737) + 15.625);
   #else
   envReleaseTword = envDecayTword; //ADS MODE
   #endif
@@ -166,18 +163,19 @@ ISR(TIMER0_COMPA_vect) {
   if (lsb) {
     lfsr ^= 0xA3000000u;
   }
+  ditherByte = lfsr & 0xFF; // will be used to dither output
   // handle Envelope DDS
   switch (envState) {
     case WAIT:
       envPhaccu = 0; // clear the accumulator
       lastEnvCnt = 0;
       envCurrentLevel = 0;
-      ENV_PWM = 0;
+      pwmVal = 0;
       break;
     case START_ATTACK:
       envPhaccu = 0; // clear the accumulator
       lastEnvCnt = 0;
-      envMultFactor = 255 - envCurrentLevel;
+      envMultFactor = 255 - (envCurrentLevel >> 8);
       envStoredLevel = envCurrentLevel;
       envState = ATTACK;
       break;
@@ -188,9 +186,13 @@ ISR(TIMER0_COMPA_vect) {
         envState = START_DECAY; // end of attack stage when counter wraps
       } else {
         tableVal = pgm_read_word_near(expTable16 + envCnt);
-        //envCurrentLevel = ((envMultFactor * pgm_read_byte_near(expTable + envCnt)) >> 8) + envStoredLevel;
-        envCurrentLevel = ((envMultFactor * (tableVal >> 8)) >> 8) + envStoredLevel;
-        ENV_PWM = envCurrentLevel;
+        envCurrentLevel = ((uint32_t(envMultFactor) * uint32_t(tableVal)) >> 8) + envStoredLevel;
+        pwmVal = envCurrentLevel >> 8; // top 8 bits
+        // apply dither
+        pwmFrac = envCurrentLevel & 0xFF; // lower 8 bits fractional part
+        if ((pwmFrac > ditherByte) && (pwmVal < 255)) {
+          pwmVal += 1;
+        }
         lastEnvCnt = envCnt;
       }
       break;
@@ -207,22 +209,26 @@ ISR(TIMER0_COMPA_vect) {
         envState = SUSTAIN; // end of release stage when counter wraps
       } else {
         tableVal = pgm_read_word_near(expTable16 + envCnt);
-        //envCurrentLevel = 255 - ((envMultFactor * pgm_read_byte_near(expTable + envCnt)) >> 8);
-        envCurrentLevel = 255 - ((envMultFactor * (tableVal >> 8)) >> 8);
-        ENV_PWM = envCurrentLevel;
+        envCurrentLevel = 65535 - ((uint32_t(envMultFactor) * uint32_t(tableVal)) >> 8);
+        pwmVal = envCurrentLevel >> 8; // top 8 bits
+        // apply dither
+        pwmFrac = envCurrentLevel & 0xFF; // lower 8 bits fractional part
+        if ((pwmFrac < ditherByte) && (pwmVal > 0)) {
+          pwmVal -= 1;
+        }
         lastEnvCnt = envCnt;
       }
       break;
     case SUSTAIN:
       envPhaccu = 0; // clear the accumulator
       lastEnvCnt = 0;
-      envCurrentLevel = envSustainControl;
-      ENV_PWM = envCurrentLevel;
+      envCurrentLevel = envSustainControl << 8;
+      pwmVal = envCurrentLevel >> 8; // top 8 bits
       break;
     case START_RELEASE:
       envPhaccu = 0; // clear the accumulator
       lastEnvCnt = 0;
-      envMultFactor = envCurrentLevel;
+      envMultFactor = envCurrentLevel >> 8;
       envStoredLevel = envCurrentLevel;
       envState = RELEASE;
       break;
@@ -233,15 +239,21 @@ ISR(TIMER0_COMPA_vect) {
         envState = WAIT; // end of release stage when counter wraps
       } else {
         tableVal = pgm_read_word_near(expTable16 + envCnt);
-        //envCurrentLevel = envStoredLevel - ((envMultFactor * pgm_read_byte_near(expTable + envCnt)) >> 8);
-        envCurrentLevel = envStoredLevel - ((envMultFactor * (tableVal >> 8)) >> 8);
-        ENV_PWM = envCurrentLevel;
+        envCurrentLevel = envStoredLevel - ((uint32_t(envMultFactor) * uint32_t(tableVal)) >> 8);
+        pwmVal = envCurrentLevel >> 8; // top 8 bits
+        // apply dither
+        pwmFrac = envCurrentLevel & 0xFF; // lower 8 bits fractional part
+        if ((pwmFrac < ditherByte) && (pwmVal > 0)) {
+          pwmVal -= 1;
+        }
         lastEnvCnt = envCnt;
       }
       break;
     default:
       break;
   }
+  // write to PWM register
+  ENV_PWM = pwmVal;
   #ifdef ISR_TEST_BUILD
   PORTB &= ~0x8; // clear PB3
   #endif
