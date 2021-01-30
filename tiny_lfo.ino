@@ -1,5 +1,7 @@
 /*
- * LFO generator for ATTINY85
+ * LFO + noise generator for ATTINY85
+ * LFO waveforms of ramp up/down, triangle, square, sample & hold
+ * white noise on another pin
  * By Peter Gaggs
  * MIT License
  * Copyright (c) 2019 petegaggs
@@ -26,11 +28,13 @@
 #include <avr/io.h>
 #include <avr/interrupt.h>
 
-#define PWM_PIN 1 //OC1A pin 6 of IC
+#define LFO_PWM_PIN 1   //OC1A pin 6 of IC
+#define NOISE_PWM_PIN 0 //OC0A pin 5 of IC
 #define LFO_FREQ_PIN A2 //pin 3 of IC
 #define LFO_WAVE_PIN A3 //pin 2 of IC
 
 #define LFO_PWM OCR1A
+#define NOISE_PWM OCR0A
 
 // LFO stuff
 bool triPhase = true; // rising or falling phase for triangle wave
@@ -52,7 +56,8 @@ enum lfoWaveTypes {
 lfoWaveTypes lfoWaveform;
 
 void setup() {
-  pinMode(PWM_PIN, OUTPUT);
+  pinMode(LFO_PWM_PIN, OUTPUT);
+  pinMode(NOISE_PWM_PIN, OUTPUT);
   PLLCSR = _BV(PLLE); // enable PLL
   delay(10); //wait a bit to allow PLL to lock
   while (PLLCSR & _BV(PLOCK) == 0){
@@ -66,8 +71,7 @@ void setup() {
   TCCR0A = 0;
   TCCR0B = 0;
   TCNT0 = 0;
-  OCR0A = 255;
-  TCCR0A = (1 << WGM01);
+  TCCR0A = (1 << WGM01) | (1 << WGM00) | (1 << COM0A1); //fast pwm mode, enable 0C0A pwm
   TCCR0B = (1 << CS00);
   TIMSK = (1 << OCIE0A);
   interrupts();
@@ -179,5 +183,6 @@ ISR(TIMER0_COMPA_vect) {
       break;
   }
   LFO_PWM = pwmSet;
+  NOISE_PWM = ditherByte;
   lastLfoCnt = lfoCnt;
 }
