@@ -30,7 +30,8 @@
 #define LFO_FREQ_PIN A2 //pin 3 of IC
 #define LFO_WAVE_PIN A3 //pin 2 of IC
 #define ISR_TEST_PIN 0 //pin 5 of IC
-#define ISR_TEST_BUILD //test the ISR timing
+#define RANGE_SEL_PIN 2 //pin 7 of IC
+//#define ISR_TEST_BUILD //test the ISR timing
 #define LFO_PWM OCR1A
 
 // LFO stuff
@@ -57,6 +58,8 @@ void setup() {
   #ifdef ISR_TEST_BUILD
   pinMode(ISR_TEST_PIN, OUTPUT);
   #endif
+  pinMode(RANGE_SEL_PIN, INPUT);
+  digitalWrite(RANGE_SEL_PIN, HIGH); // enable internal pullup
   PLLCSR = _BV(PLLE); // enable PLL
   delay(10); //wait a bit to allow PLL to lock
   while (PLLCSR & _BV(PLOCK) == 0){
@@ -80,10 +83,20 @@ void setup() {
 void getLfoParams() {
   // read ADC to calculate the required DDS tuning word, range 0.01Hz and 10Hz approx
   uint32_t tempVal = analogRead(LFO_FREQ_PIN);
-  if (lfoWaveform == TRI) {
-    lfoTword_m = (tempVal << 11) + 687; // gives about 0.01 - 8Hz range
+  if (digitalRead(RANGE_SEL_PIN) == 1) {
+    // high range, around 1Hz to 31Hz
+    if (lfoWaveform == TRI) {
+      lfoTword_m = (tempVal << 13) + 262144;
+    } else {
+      lfoTword_m = (tempVal << 12) + 131072;
+    }
   } else {
-    lfoTword_m = (tempVal << 10) + 1374; // gives about 0.01 - 8Hz range    
+    // low range, around 0.007Hz to 2Hz
+    if (lfoWaveform == TRI) {
+      lfoTword_m = (tempVal << 9) + 2048;
+    } else {
+      lfoTword_m = (tempVal << 8) + 1024;
+    }    
   }
   // read ADC to get the LFO wave type
   int waveType = analogRead(LFO_WAVE_PIN) >> 7;
