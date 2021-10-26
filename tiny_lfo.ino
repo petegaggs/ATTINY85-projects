@@ -49,7 +49,9 @@ enum lfoWaveTypes {
   SAW,
   TRI,
   SQR,
-  SAMPLE_AND_HOLD
+  SAMPLE_AND_HOLD,
+  STEPSUP,
+  STEPSDOWN
 };
 lfoWaveTypes lfoWaveform;
 
@@ -117,10 +119,10 @@ void getLfoParams() {
       lfoWaveform = SAMPLE_AND_HOLD;
       break;
     case 5:
-      lfoWaveform = RAMP; // reserved
+      lfoWaveform = STEPSUP;
       break;
     case 6:
-      lfoWaveform = RAMP; // reserved
+      lfoWaveform = STEPSDOWN;
       break;
     case 7:
       lfoWaveform = RAMP; // reserved
@@ -194,6 +196,12 @@ ISR(TIMER0_COMPA_vect) {
       if (lfoCnt < lastLfoCnt) {
         pwmSet = ditherByte; // random
       }
+      break;
+    case STEPSUP:
+      pwmSet = lfoCnt & 0xE0;
+      break;
+    case STEPSDOWN:
+      pwmSet = (255 - lfoCnt) & 0xE0;
       break;
     default:
       break;
