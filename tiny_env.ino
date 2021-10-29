@@ -22,8 +22,9 @@
  * SOFTWARE.
  */
 
-//#define ADSR_BUILD // note! need to blow fuse RSTDISBL. If not defined, operates in ADS mode
+#define ADSR_BUILD // note! need to blow fuse RSTDISBL. If not defined, operates in ADS mode
 //#define ISR_TEST_BUILD // use a GPIO to measure ISR time
+#define GATE_ACTIVE 0 // gate can be active high or low
 #include <avr/pgmspace.h>
 #include <avr/io.h>
 #include <avr/interrupt.h>
@@ -143,7 +144,7 @@ void loop() {
 }
 
 ISR(PCINT0_vect) {
-  if (digitalRead(0)) {
+  if (digitalRead(GATE_PIN) == GATE_ACTIVE) {
     if (envState != ATTACK) {
       envState = START_ATTACK;
     } 
